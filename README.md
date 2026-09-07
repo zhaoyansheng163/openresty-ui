@@ -4,6 +4,24 @@
 
 纯 OpenResty 实现，**不依赖 etcd / Consul / Redis / 数据库**，不需要安装任何额外的 Lua 库；管理台是一个单文件网页，不需要 Node.js 构建。整个项目只包含两个目录：`admin`（管理台）和 `agent`（被管理的 OpenResty 实例）。
 
+## 界面预览
+
+**管理台首页** —— 左侧实例列表（在线状态），右侧 upstream 节点表（地址 / 权重 / 健康状态 / 失败次数），每 5s 自动刷新：
+
+![管理台首页](docs/imgs/index.png)
+
+**添加 OpenResty 实例** —— 填名称、管理口地址 / 端口、Token，保存前自动验证连通性：
+
+![添加实例](docs/imgs/add-openresty.png)
+
+**编辑节点** —— 修改后端地址 / 端口 / 权重，保存即生效（0 reload）：
+
+![编辑节点](docs/imgs/edit-node.png)
+
+**用户与角色管理** —— 超级管理员可新增用户、改密码与角色，保存即生效：
+
+![用户管理](docs/imgs/user.png)
+
 ## 功能特性
 
 - **动态 Upstream 管理**：添加 / 编辑 / 删除后端节点，调整权重，手动摘流与恢复，全部实时生效，无需 reload
