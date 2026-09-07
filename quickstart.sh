@@ -41,13 +41,18 @@ http {
 }
 EOF
 
-# 演示环境用随机密码的管理员账号（源码目录 admin/conf/users.json 不受影响）
-ADMIN_PASS="$(head -c 32 /dev/urandom | sha1sum | cut -c1-10)"
-cat > "$DEMO/admin/conf/users.json" <<EOF
-{
-  "admin": { "password": "$ADMIN_PASS", "role": "admin" }
-}
+# 演示环境沿用源码 admin/conf/users.json 的账号（想固定演示密码，改那个文件即可）；
+# 仅当配置缺失（文件不存在或没有 admin 用户）时才临时生成随机密码
+USERS_FILE="$DEMO/admin/conf/users.json"
+if [ -f "$USERS_FILE" ] && grep -q '"admin"' "$USERS_FILE"; then
+    ADMIN_PASS="$(sed -n 's/.*"admin"[[:space:]]*:[[:space:]]*{[^}]*"password"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$USERS_FILE" | head -1)"
+    [ -n "$ADMIN_PASS" ] || ADMIN_PASS="(解析失败，请查看 $USERS_FILE)"
+else
+    ADMIN_PASS="$(head -c 32 /dev/urandom | sha1sum | cut -c1-10)"
+    cat > "$USERS_FILE" <<EOF
+{ "admin": { "password": "$ADMIN_PASS", "role": "admin" } }
 EOF
+fi
 
 # ---------- 2. 启动 ----------
 start_one() {
