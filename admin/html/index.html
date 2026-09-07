@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenResty 动态 Upstream 管理平台</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #f0f2f5; color: #1f2329; font-size: 14px;
+  }
+  header {
+    background: #1e6fff; color: #fff; padding: 14px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header .sub { font-size: 12px; opacity: .85; }
+  .layout { display: flex; min-height: calc(100vh - 56px); }
+
+  /* 左栏：实例 */
+  .sidebar {
+    width: 260px; background: #fff; border-right: 1px solid #e5e6eb;
+    padding: 16px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .sidebar .panel-title {
+    font-size: 13px; color: #646a73; display: flex; justify-content: space-between; align-items: center;
+  }
+  .inst-item {
+    border: 1px solid #e5e6eb; border-radius: 8px; padding: 10px 12px;
+    cursor: pointer; display: flex; align-items: center; gap: 8px; background: #fff;
+  }
+  .inst-item:hover { border-color: #1e6fff; }
+  .inst-item.active { border-color: #1e6fff; background: #f0f6ff; }
+  .inst-dot { width: 8px; height: 8px; border-radius: 50%; background: #c9cdd4; flex: none; }
+  .inst-dot.online { background: #34c724; }
+  .inst-dot.offline { background: #f54a45; }
+  .inst-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .inst-addr { font-size: 12px; color: #8f959e; }
+  .btn-del-inst {
+    border: none; background: none; color: #f54a45; cursor: pointer; font-size: 13px; flex: none;
+  }
+  .btn {
+    border: 1px solid #1e6fff; color: #1e6fff; background: #fff; border-radius: 6px;
+    padding: 5px 12px; cursor: pointer; font-size: 13px;
+  }
+  .btn:hover { background: #f0f6ff; }
+  .btn.primary { background: #1e6fff; color: #fff; }
+  .btn.primary:hover { background: #3b82f6; }
+  .btn.mini { padding: 2px 8px; font-size: 12px; }
+  .btn.warn { border-color: #ff8800; color: #ff8800; }
+  .btn.danger { border-color: #f54a45; color: #f54a45; }
+  .btn.ghost { border-color: rgba(255,255,255,.7); color: #fff; background: transparent; }
+  .btn.ghost:hover { background: rgba(255,255,255,.15); }
+  .hd-user { font-size: 13px; opacity: .92; }
+  .hd-role { font-size: 12px; opacity: .75; margin-left: 4px; }
+
+  /* 右栏：upstream */
+  .main { flex: 1; padding: 20px 24px; overflow: auto; }
+  .main .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .main .toolbar h2 { font-size: 16px; }
+  .ups-group { background: #fff; border: 1px solid #e5e6eb; border-radius: 10px; margin-bottom: 16px; }
+  .ups-group .ups-head {
+    padding: 10px 16px; border-bottom: 1px solid #e5e6eb;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .ups-group .ups-head .name { font-weight: 600; font-family: Consolas, monospace; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 16px; border-bottom: 1px solid #f2f3f5; font-size: 13px; }
+  th { color: #646a73; font-weight: 500; background: #fafbfc; }
+  tr:last-child td { border-bottom: none; }
+  td.addr { font-family: Consolas, monospace; }
+  .badge {
+    display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px;
+  }
+  .badge.up { background: #e8f7e8; color: #34c724; }
+  .badge.down { background: #feeceb; color: #f54a45; }
+  .badge.manual { background: #fff3e0; color: #ff8800; }
+  .empty { color: #8f959e; padding: 24px; text-align: center; }
+
+  /* 模态框 / toast */
+  .mask {
+    position: fixed; inset: 0; background: rgba(0,0,0,.4);
+    display: none; align-items: center; justify-content: center; z-index: 100;
+  }
+  .mask.show { display: flex; }
+  .modal {
+    background: #fff; border-radius: 12px; width: 380px; padding: 20px;
+  }
+  .modal h3 { font-size: 15px; margin-bottom: 14px; }
+  .form-row { margin-bottom: 12px; }
+  .form-row label { display: block; font-size: 13px; color: #646a73; margin-bottom: 4px; }
+  .form-row input, .form-row select {
+    width: 100%; padding: 7px 10px; border: 1px solid #e5e6eb; border-radius: 6px; font-size: 13px;
+    background: #fff;
+  }
+  .form-row input:focus, .form-row select:focus { outline: none; border-color: #1e6fff; }
+  .modal .divider { border-top: 1px solid #e5e6eb; margin: 14px 0 4px; }
+  .modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  #toast {
+    position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,.78); color: #fff; padding: 9px 18px; border-radius: 8px;
+    font-size: 13px; display: none; z-index: 200; max-width: 70vw;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>OpenResty 动态 Upstream 管理平台</h1>
+    <div class="sub">balancer_by_lua + lua_shared_dict · 0 reload · 不依赖 etcd</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <span id="userInfo" class="hd-user" style="display:none"></span>
+    <button class="btn ghost" id="btnUsers" style="display:none" onclick="openUsers()">用户管理</button>
+    <button class="btn ghost" id="btnLogout" style="display:none" onclick="doLogout()">退出</button>
+  </div>
+</header>
+
+<div class="layout">
+  <div class="sidebar">
+    <div class="panel-title">
+      <span>OpenResty 实例</span>
+      <button class="btn mini" id="btnAddInst" onclick="showAddInstance()">+ 添加实例</button>
+    </div>
+    <div id="instList"></div>
+  </div>
+
+  <div class="main">
+    <div class="toolbar">
+      <h2 id="mainTitle">请选择左侧实例</h2>
+      <button class="btn" onclick="loadUpstreams()">刷新</button>
+      <button class="btn primary" id="btnAddSrv" onclick="showAddServer()">+ 添加节点</button>
+      <span id="autoHint" style="color:#8f959e;font-size:12px;margin-left:auto">每 5s 自动刷新</span>
+    </div>
+    <div id="upsArea"><div class="empty">未选择实例</div></div>
+  </div>
+</div>
+
+<!-- 登录 -->
+<div class="mask" id="maskLogin">
+  <div class="modal">
+    <h3>登录</h3>
+    <div class="form-row"><label>用户名</label><input id="l_user" autocomplete="username"></div>
+    <div class="form-row"><label>密码</label><input id="l_pass" type="password" autocomplete="current-password"></div>
+    <div class="actions">
+      <button class="btn primary" style="width:100%" onclick="doLogin()">登 录</button>
+    </div>
+    <div style="margin-top:10px;font-size:12px;color:#8f959e">
+      账号配置见 admin/conf/users.json（超管 admin / 只读 viewer），修改后无需重启
+    </div>
+  </div>
+</div>
+
+<!-- 用户管理 -->
+<div class="mask" id="maskUsers">
+  <div class="modal" style="width:540px">
+    <h3>用户管理</h3>
+    <table>
+      <thead><tr><th>用户名</th><th>角色</th><th style="width:150px">操作</th></tr></thead>
+      <tbody id="usersBody"><tr><td colspan="3" class="empty">加载中...</td></tr></tbody>
+    </table>
+    <div class="divider"></div>
+    <h3 style="font-size:14px;margin:10px 0 12px">新增用户</h3>
+    <div style="display:flex;gap:8px">
+      <input id="u_name" placeholder="用户名" style="flex:1;padding:7px 10px;border:1px solid #e5e6eb;border-radius:6px;font-size:13px">
+      <input id="u_pass" type="password" placeholder="密码（至少 6 位）" style="flex:1;padding:7px 10px;border:1px solid #e5e6eb;border-radius:6px;font-size:13px">
+      <select id="u_role" style="width:140px;padding:7px 10px;border:1px solid #e5e6eb;border-radius:6px;font-size:13px;background:#fff">
+        <option value="viewer">只读用户</option>
+        <option value="admin">超级管理员</option>
+      </select>
+    </div>
+    <div class="actions" style="margin-top:14px">
+      <button class="btn" onclick="hideMask()">关闭</button>
+      <button class="btn primary" onclick="addUser()">添加用户</button>
+    </div>
+  </div>
+</div>
+
+<!-- 编辑用户 -->
+<div class="mask" id="maskUserEdit">
+  <div class="modal">
+    <h3 id="userEditTitle">编辑用户</h3>
+    <div class="form-row"><label>新密码（留空表示不修改）</label><input id="ue_pass" type="password" placeholder="至少 6 位"></div>
+    <div class="form-row"><label>角色</label>
+      <select id="ue_role">
+        <option value="viewer">只读用户</option>
+        <option value="admin">超级管理员</option>
+      </select>
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="hideMask()">取消</button>
+      <button class="btn primary" onclick="submitUserEdit()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 添加实例 -->
+<div class="mask" id="maskInst">
+  <div class="modal">
+    <h3>添加 OpenResty 实例</h3>
+    <div class="form-row"><label>实例名称</label><input id="i_name" placeholder="例如 inst-107"></div>
+    <div class="form-row"><label>管理口地址（IP/域名）</label><input id="i_host" placeholder="例如 192.168.50.107"></div>
+    <div class="form-row"><label>管理口端口（agent 的 8081）</label><input id="i_port" value="8081"></div>
+    <div class="form-row"><label>X-Auth-Token</label><input id="i_token" placeholder="agent 的 inner_token"></div>
+    <div class="actions">
+      <button class="btn" onclick="hideMask()">取消</button>
+      <button class="btn primary" onclick="addInstance()">保存（先验证连通性）</button>
+    </div>
+  </div>
+</div>
+
+<!-- 添加节点 -->
+<div class="mask" id="maskSrv">
+  <div class="modal">
+    <h3 id="srvModalTitle">添加后端节点</h3>
+    <div class="form-row" id="rowUps"><label>upstream 名称</label><input id="s_upstream" placeholder="例如 backend"></div>
+    <div class="form-row"><label>后端地址（IP/域名）</label><input id="s_host" placeholder="例如 192.168.2.145"></div>
+    <div class="form-row"><label>端口</label><input id="s_port" placeholder="例如 8080"></div>
+    <div class="form-row"><label>权重（1-100，默认 1）</label><input id="s_weight" value="1"></div>
+    <input type="hidden" id="s_old_host"><input type="hidden" id="s_old_port">
+    <div class="actions">
+      <button class="btn" onclick="hideMask()">取消</button>
+      <button class="btn primary" id="srvConfirmBtn" onclick="submitServer()">确定</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let currentInstance = null;
+let autoTimer = null;
+let srvEditMode = false;
+let srvEditUps = null;
+let currentUser = null;   // {username, role} | null
+
+const isAdmin = () => !!currentUser && currentUser.role === "admin";
+const ROLE_TEXT = { admin: "超级管理员", viewer: "只读用户" };
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g,
+  c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+function toast(msg, ok) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.style.background = ok === false ? "rgba(200,40,40,.9)" : "rgba(0,0,0,.78)";
+  t.style.display = "block";
+  setTimeout(() => t.style.display = "none", 2600);
+}
+
+async function api(path, body) {
+  const opt = body
+    ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+    : {};
+  const res = await fetch(path, opt);
+  // 登录接口自身的 401（密码错误）原样返回，其余接口 401 转登录框
+  if (res.status === 401 && path !== "/api/login") {
+    showLogin();
+    return { code: "E401", msg: "未登录或登录已过期" };
+  }
+  const j = await res.json().catch(() => ({ code: "ERR", msg: "响应解析失败" }));
+  return j;
+}
+
+function guardWrite() {
+  if (!isAdmin()) { toast("当前为只读用户，无权执行该操作", false); return false; }
+  return true;
+}
+
+/* ---------------- 登录 / 会话 ---------------- */
+
+function showLogin() {
+  currentUser = null;
+  currentInstance = null;
+  $("userInfo").style.display = "none";
+  $("btnLogout").style.display = "none";
+  $("btnUsers").style.display = "none";
+  $("btnAddInst").style.display = "none";
+  $("btnAddSrv").style.display = "none";
+  $("mainTitle").textContent = "请先登录";
+  $("upsArea").innerHTML = '<div class="empty">未登录</div>';
+  hideMask();
+  $("maskLogin").classList.add("show");
+  $("l_user").focus();
+}
+
+function enterApp(user) {
+  currentUser = user;
+  $("maskLogin").classList.remove("show");
+  $("userInfo").style.display = "";
+  $("userInfo").innerHTML =
+    `${esc(user.username)}<span class="hd-role">${ROLE_TEXT[user.role] || user.role}</span>`;
+  $("btnLogout").style.display = "";
+  $("btnUsers").style.display = isAdmin() ? "" : "none";
+  $("btnAddInst").style.display = isAdmin() ? "" : "none";
+  $("btnAddSrv").style.display = isAdmin() ? "" : "none";
+  $("mainTitle").textContent = "请选择左侧实例";
+  loadInstances(true);
+  startAutoRefresh();
+}
+
+const LOGIN_ERR_TEXT = {
+  "invalid username or password": "用户名或密码错误",
+  "too many failed attempts, retry in 1 minute": "失败次数过多，请 1 分钟后再试",
+};
+
+async function doLogin() {
+  const username = $("l_user").value.trim();
+  const password = $("l_pass").value;
+  if (!username || !password) { toast("请输入用户名和密码", false); return; }
+  const j = await api("/api/login", { username, password });
+  if (j.code !== "OK") { toast(LOGIN_ERR_TEXT[j.msg] || j.msg || "登录失败", false); return; }
+  $("l_pass").value = "";
+  enterApp(j.data);
+}
+
+async function doLogout() {
+  await api("/api/logout", {});
+  showLogin();
+}
+
+async function boot() {
+  let j;
+  try { j = await api("/api/me"); } catch (e) { j = { code: "ERR" }; }
+  if (j.code === "OK" && j.data) {
+    enterApp(j.data);
+  } else {
+    showLogin();
+  }
+}
+
+/* ---------------- 用户管理（仅超管） ---------------- */
+
+let editUserName = null;
+
+const USER_ERR_TEXT = {
+  "invalid username (1-64 chars, letters/digits/._-)": "用户名不合法（1-64 位，字母/数字/._-）",
+  "invalid password (6-128 chars)": "密码长度需 6-128 位",
+  "invalid role (admin/viewer)": "角色不合法",
+  "user already exists": "用户已存在",
+  "user not found": "用户不存在",
+  "cannot demote the last admin": "不能降级唯一的管理员",
+  "cannot delete the last admin": "不能删除唯一的管理员",
+  "cannot delete the current logged-in user": "不能删除当前登录用户",
+};
+const userErrMsg = m => USER_ERR_TEXT[m] || m || "操作失败";
+
+async function openUsers() {
+  if (!guardWrite()) return;
+  $("u_name").value = "";
+  $("u_pass").value = "";
+  $("u_role").value = "viewer";
+  $("maskUsers").classList.add("show");
+  await loadUsers();
+}
+
+async function loadUsers() {
+  const j = await api("/api/users");
+  if (j.code !== "OK") {
+    $("usersBody").innerHTML = `<tr><td colspan="3" class="empty">${esc(j.msg || "加载失败")}</td></tr>`;
+    return;
+  }
+  const list = j.data || [];
+  if (!list.length) {
+    $("usersBody").innerHTML = '<tr><td colspan="3" class="empty">暂无用户</td></tr>';
+    return;
+  }
+  $("usersBody").innerHTML = list.map(u => {
+    const self = currentUser && u.username === currentUser.username;
+    return `
+      <tr>
+        <td class="addr">${esc(u.username)}${self ? ' <span style="color:#8f959e;font-size:12px">(当前登录)</span>' : ""}</td>
+        <td>${ROLE_TEXT[u.role] || esc(u.role)}</td>
+        <td style="white-space:nowrap">
+          <button class="btn mini" onclick="editUser('${esc(u.username)}','${u.role}')">编辑</button>
+          ${self ? "" : `<button class="btn mini danger" onclick="delUser('${esc(u.username)}')">删除</button>`}
+        </td>
+      </tr>`;
+  }).join("");
+}
+
+async function addUser() {
+  const body = {
+    username: $("u_name").value.trim(),
+    password: $("u_pass").value,
+    role: $("u_role").value,
+  };
+  if (!body.username || !body.password) { toast("请填写用户名和密码", false); return; }
+  const j = await api("/api/users", body);
+  if (j.code !== "OK") { toast(userErrMsg(j.msg), false); return; }
+  toast("用户已添加");
+  $("u_name").value = "";
+  $("u_pass").value = "";
+  loadUsers();
+}
+
+function editUser(name, role) {
+  editUserName = name;
+  $("userEditTitle").textContent = "编辑用户 " + name;
+  $("ue_pass").value = "";
+  $("ue_role").value = role;
+  $("maskUserEdit").classList.add("show");
+}
+
+async function submitUserEdit() {
+  const pw = $("ue_pass").value;
+  const body = { username: editUserName, role: $("ue_role").value };
+  if (pw) body.password = pw;
+  const j = await api("/api/users/update", body);
+  if (j.code !== "OK") { toast(userErrMsg(j.msg), false); return; }
+  hideMask();
+  if (currentUser && editUserName === currentUser.username) {
+    // 修改自己后 session 已被服务端注销，引导重新登录
+    toast("当前账号信息已变更，请重新登录");
+    showLogin();
+    return;
+  }
+  toast("已保存");
+  loadUsers();
+}
+
+async function delUser(name) {
+  if (!confirm(`确定删除用户「${name}」？`)) return;
+  const j = await api("/api/users/delete", { username: name });
+  if (j.code !== "OK") { toast(userErrMsg(j.msg), false); return; }
+  toast("用户已删除");
+  loadUsers();
+}
+
+/* ---------------- 实例管理 ---------------- */
+
+async function loadInstances(selectFirst) {
+  const j = await api("/api/instances");
+  if (j.code !== "OK") { toast(j.msg, false); return; }
+  renderInstances(j.data || []);
+  if (selectFirst && !currentInstance && (j.data || []).length) {
+    selectInstance(j.data[0].name);
+  }
+}
+
+function renderInstances(list) {
+  const box = $("instList");
+  if (!list.length) {
+    box.innerHTML = `<div class="empty" style="padding:16px 4px">暂无实例${isAdmin() ? "<br>点击上方按钮添加" : ""}</div>`;
+    return;
+  }
+  box.innerHTML = list.map(it => `
+    <div class="inst-item ${it.name === currentInstance ? "active" : ""}"
+         id="inst-${esc(it.name)}" onclick="selectInstance('${esc(it.name)}')">
+      <span class="inst-dot" id="dot-${esc(it.name)}"></span>
+      <div style="flex:1;overflow:hidden">
+        <div class="inst-name">${esc(it.name)}</div>
+        <div class="inst-addr">${esc(it.host)}:${esc(it.port)}</div>
+      </div>
+      ${isAdmin() ? `<button class="btn-del-inst" title="删除实例"
+              onclick="event.stopPropagation();delInstance('${esc(it.name)}')">✕</button>` : ""}
+    </div>`).join("");
+}
+
+function showAddInstance() {
+  if (!guardWrite()) return;
+  ["i_name", "i_host", "i_token"].forEach(id => $(id).value = "");
+  $("i_port").value = "8081";
+  $("maskInst").classList.add("show");
+}
+
+async function addInstance() {
+  const body = {
+    name: $("i_name").value.trim(),
+    host: $("i_host").value.trim(),
+    port: Number($("i_port").value.trim()),
+    token: $("i_token").value.trim(),
+  };
+  if (!body.name || !body.host || !body.port) { toast("请填写名称、地址和端口", false); return; }
+  const j = await api("/api/instances", body);
+  if (j.code !== "OK") { toast(j.msg, false); return; }
+  hideMask();
+  toast("实例已添加");
+  await loadInstances();
+  selectInstance(body.name);
+}
+
+async function delInstance(name) {
+  if (!guardWrite()) return;
+  if (!confirm(`确定删除实例「${name}」？\n（只删除管理端登记，不影响该 OpenResty 实例本身）`)) return;
+  const j = await api("/api/instances/delete", { name });
+  if (j.code !== "OK") { toast(j.msg, false); return; }
+  if (currentInstance === name) {
+    currentInstance = null;
+    $("mainTitle").textContent = "请选择左侧实例";
+    $("upsArea").innerHTML = '<div class="empty">未选择实例</div>';
+  }
+  await loadInstances(true);
+}
+
+function selectInstance(name) {
+  currentInstance = name;
+  document.querySelectorAll(".inst-item").forEach(el => el.classList.remove("active"));
+  const el = $("inst-" + name);
+  if (el) el.classList.add("active");
+  $("mainTitle").textContent = "实例：" + name;
+  loadUpstreams();
+}
+
+/* ---------------- upstream 节点管理 ---------------- */
+
+async function loadUpstreams() {
+  if (!currentInstance) return;
+  let j;
+  try {
+    j = await api("/api/upstreams?instance=" + encodeURIComponent(currentInstance));
+  } catch (e) {
+    $("upsArea").innerHTML = `<div class="empty">请求管理端失败：${esc(String(e))}</div>`;
+    return;
+  }
+  const dot = $("dot-" + currentInstance);
+  if (j.code !== "OK") {
+    if (dot) { dot.className = "inst-dot offline"; }
+    $("upsArea").innerHTML = `<div class="empty">实例不可达：${esc(j.msg || "")}</div>`;
+    return;
+  }
+  if (dot) { dot.className = "inst-dot online"; }
+  renderUpstreams(j.data.upstreams || {});
+}
+
+function nodeBadge(n) {
+  if (n.manual_down) return '<span class="badge manual">手动摘流</span>';
+  if (n.health_down) return '<span class="badge down">DOWN</span>';
+  return '<span class="badge up">健康</span>';
+}
+
+function renderUpstreams(upstreams) {
+  const names = Object.keys(upstreams).sort();
+  const area = $("upsArea");
+  if (!names.length) {
+    area.innerHTML = `<div class="empty">该实例暂无 upstream 节点${isAdmin() ? "<br>点击右上角「+ 添加节点」" : ""}</div>`;
+    return;
+  }
+  area.innerHTML = names.map(ups => {
+    const nodes = upstreams[ups] || [];
+    const rows = nodes.map(n => `
+      <tr>
+        <td class="addr">${esc(n.host)}:${esc(n.port)}</td>
+        <td>${esc(n.weight)}</td>
+        <td>${nodeBadge(n)}</td>
+        <td>${n.health_down && !n.manual_down ? ("连续失败 " + esc(n.fails ?? "-")) : "-"}</td>
+        <td style="white-space:nowrap">
+          ${isAdmin() ? `
+          <button class="btn mini" onclick="editServer('${esc(ups)}','${esc(n.host)}',${n.port},${n.weight})">编辑</button>
+          <button class="btn mini ${n.manual_down ? "" : "warn"}"
+                  onclick="toggleServer('${esc(ups)}','${esc(n.host)}',${n.port},${n.manual_down ? "false" : "true"})">
+            ${n.manual_down ? "恢复" : "摘流"}</button>
+          <button class="btn mini danger"
+                  onclick="delServer('${esc(ups)}','${esc(n.host)}',${n.port})">删除</button>` : `<span style="color:#8f959e">只读</span>`}
+        </td>
+      </tr>`).join("");
+    return `
+      <div class="ups-group">
+        <div class="ups-head">
+          <span class="name">upstream ${esc(ups)}</span>
+          <span style="color:#8f959e;font-size:12px">${nodes.length} 个节点</span>
+        </div>
+        <table>
+          <thead><tr><th>节点地址</th><th>权重</th><th>状态</th><th>失败次数</th><th>操作</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="5" class="empty">暂无节点</td></tr>'}</tbody>
+        </table>
+      </div>`;
+  }).join("");
+}
+
+function showAddServer() {
+  if (!guardWrite()) return;
+  if (!currentInstance) { toast("请先选择实例", false); return; }
+  srvEditMode = false;
+  srvEditUps = null;
+  $("srvModalTitle").textContent = "添加后端节点";
+  $("rowUps").style.display = "";
+  $("srvConfirmBtn").textContent = "添加";
+  ["s_upstream", "s_host", "s_port"].forEach(id => $(id).value = "");
+  $("s_weight").value = "1";
+  $("maskSrv").classList.add("show");
+}
+
+function editServer(ups, host, port, weight) {
+  srvEditMode = true;
+  srvEditUps = ups;
+  $("srvModalTitle").textContent = "编辑节点 " + host + ":" + port;
+  $("rowUps").style.display = "none";
+  $("srvConfirmBtn").textContent = "保存";
+  $("s_old_host").value = host;
+  $("s_old_port").value = port;
+  $("s_host").value = host;
+  $("s_port").value = port;
+  $("s_weight").value = weight;
+  $("maskSrv").classList.add("show");
+}
+
+async function submitServer() {
+  const body = {
+    instance: currentInstance,
+    upstream: srvEditMode ? srvEditUps : $("s_upstream").value.trim(),
+    host: $("s_host").value.trim(),
+    port: Number($("s_port").value.trim()),
+    weight: Number($("s_weight").value.trim() || 1),
+  };
+  let path;
+  if (srvEditMode) {
+    path = "/api/upstreams/update_server";
+    body.new_host = body.host;
+    body.new_port = body.port;
+    body.host = $("s_old_host").value;
+    body.port = Number($("s_old_port").value);
+  } else {
+    path = "/api/upstreams/add_server";
+  }
+  if (!body.upstream || !body.host || !body.port) { toast("请填写完整", false); return; }
+  const j = await api(path, body);
+  if (j.code !== "OK") { toast(j.msg, false); return; }
+  hideMask();
+  toast(srvEditMode ? "节点已更新" : "节点已添加，立即生效（0 reload）");
+  loadUpstreams();
+}
+
+async function toggleServer(ups, host, port, down) {
+  if (!guardWrite()) return;
+  const j = await api("/api/upstreams/set_server",
+    { instance: currentInstance, upstream: ups, host, port, down });
+  if (j.code !== "OK") { toast(j.msg, false); return; }
+  toast(down ? "已手动摘流" : "已恢复分发");
+  loadUpstreams();
+}
+
+async function delServer(ups, host, port) {
+  if (!guardWrite()) return;
+  if (!confirm(`确定从 upstream「${ups}」删除节点 ${host}:${port}？`)) return;
+  const j = await api("/api/upstreams/delete_server",
+    { instance: currentInstance, upstream: ups, host, port });
+  if (j.code !== "OK") { toast(j.msg, false); return; }
+  toast("节点已删除");
+  loadUpstreams();
+}
+
+/* ---------------- 其他 ---------------- */
+
+function hideMask() {
+  document.querySelectorAll(".mask").forEach(m => m.classList.remove("show"));
+}
+// 点遮罩关闭（登录框除外，不允许点空白处取消登录）
+document.querySelectorAll(".mask:not(#maskLogin)").forEach(m =>
+  m.addEventListener("click", e => { if (e.target === m) hideMask(); }));
+
+// 登录框支持回车提交
+$("l_user").addEventListener("keydown", e => { if (e.key === "Enter") $("l_pass").focus(); });
+$("l_pass").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+
+function startAutoRefresh() {
+  if (autoTimer) clearInterval(autoTimer);
+  autoTimer = setInterval(loadUpstreams, 5000);
+}
+
+boot();
+</script>
+</body>
+</html>

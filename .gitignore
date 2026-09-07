@@ -1,0 +1,7 @@
+# 一键体验脚本生成的演示环境
+demo/
+
+# OpenResty 运行时产物
+**/logs/
+**/data/*.json
+**/data/*.json.tmp
